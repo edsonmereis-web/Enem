@@ -10,8 +10,18 @@ from analise import AREAS, carregar, diagnostico_top5, media_periodo, ranquear
 from relatorio import TEXTO_PADRAO_INVESTIR, gerar_pdf, nome_arquivo
 
 ROOT = Path(__file__).resolve().parent
-DADOS = ROOT / "data" / "processed" / "escolas_ano.parquet"
-COER = ROOT / "data" / "processed" / "coerencia_escola.parquet"
+
+
+def _achar(nome: str) -> Path:
+    """Procura o arquivo em data/processed/ ou na raiz do projeto (upload pelo site do GitHub)."""
+    for p in (ROOT / "data" / "processed" / nome, ROOT / nome):
+        if p.exists():
+            return p
+    return ROOT / "data" / "processed" / nome
+
+
+DADOS = _achar("escolas_ano.parquet")
+COER = _achar("coerencia_escola.parquet")
 
 st.set_page_config(page_title="Ranking ENEM por Escola", page_icon="🏫", layout="wide")
 
