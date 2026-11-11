@@ -1,0 +1,7 @@
+pandas
+pyarrow
+streamlit
+plotly
+requests
+matplotlib
+reportlab==4.2.5
