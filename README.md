@@ -41,3 +41,11 @@ Outros detalhes:
 - Linha de comando: `.venv/bin/python relatorio.py <CO_ESCOLA> [ano]` → `relatorios/`.
 - Referência de coerência: *percentil 75* (nota de alunos coerentes com o mesmo nº de acertos; padrão) ou *mediana nacional*.
 - O texto "Por que é tão importante investir nisto?" é editável no painel (ou deixe vazio para omitir).
+
+## Análise por habilidade (descritores da Matriz de Referência)
+- `matriz.py` extrai as 120 habilidades (H1–H30 × 4 áreas) do PDF oficial do INEP (`data/ref/matriz.pdf`) → `data/ref/habilidades.csv`.
+- `habilidades.py --anos 2024 2025` cruza `ITENS_PROVA` (caderno + posição → habilidade e dificuldade TRI) com as respostas
+  de cada aluno → % de acerto por habilidade por escola, Brasil e itens fáceis (~1,5 min).
+- Painel: aba **🧩 Habilidades**. PDF: conclusão nº 4 + tabela de habilidades prioritárias e questões fáceis.
+- Cada habilidade aparece em 1–3 questões por prova: somamos os anos e marcamos ⚠️ quando a escola tem < 30 respostas.
+- Em 2025, 5 cadernos (≈2% dos alunos, provavelmente a reaplicação) não constam no ITENS_PROVA e ficam fora desta análise.

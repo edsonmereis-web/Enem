@@ -23,7 +23,7 @@ from reportlab.lib.units import cm  # noqa: E402
 from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer,  # noqa: E402
                                 Table, TableStyle)
 
-from analise import AREAS, diagnostico_top5, ranquear  # noqa: E402
+from analise import AREAS, diagnostico_top5, itens_faceis, perfil_habilidades, ranquear  # noqa: E402
 
 AZUL = colors.HexColor("#1f4e8c")
 CINZA = colors.HexColor("#6b7280")
@@ -161,7 +161,7 @@ def _nivel_redacao(n: float) -> str:
 
 def gerar_pdf(df: pd.DataFrame, coer: pd.DataFrame | None, co_escola: int, ano: int, min_alunos: int = 10,
               remetente: str = "", texto_investir: str = TEXTO_PADRAO_INVESTIR, destino: Path | None = None,
-              referencia: str = "p75") -> bytes:
+              referencia: str = "p75", hab: dict | None = None) -> bytes:
     """referencia: 'p75' (alunos coerentes: percentil 75 de quem teve os mesmos acertos) ou 'mediana'."""
     est = _estilos()
     pre = "perda75" if referencia == "p75" else "perda"
@@ -291,16 +291,35 @@ def gerar_pdf(df: pd.DataFrame, coer: pd.DataFrame | None, co_escola: int, ano: 
             f"{a} +{_fmt(v, 0)}" for a, v in metas["ganho_necessario"].items()) + " pontos."
     story += [Paragraph(titulo, est["item"]), Paragraph(txt, est["p"])]
 
+    perf = fac = None
+    if hab is not None:
+        anos_h = sorted(df.loc[df["co_escola"] == co_escola, "ano"].unique())
+        perf = perfil_habilidades(hab["habilidades_escola"], hab["habilidades_nacional"], df, hab["matriz"],
+                                  co_escola, anos_h, ano, min_alunos)
+        fac = itens_faceis(hab["faceis_escola"], hab["faceis_nacional"], co_escola, anos_h)
+        prio = perf.dropna(subset=["gap_top5"]).sort_values("gap_top5", ascending=False)
+        prio = prio[~prio["amostra_pequena"]].head(3) if (~prio["amostra_pequena"]).sum() >= 3 else prio.head(3)
+        n += 1
+        pior_f = fac.sort_values("pct_escola").iloc[0]
+        txt = ("Cruzando cada questão com a habilidade avaliada na Matriz de Referência do ENEM, as maiores distâncias "
+               "para as cinco melhores escolas da cidade estão em: "
+               + "; ".join(f"<b>{r['area_nome']} H{r['hab']}</b> ({r['desc_hab'].rstrip('.')}: "
+                           f"{_fmt(r['pct_escola'], 0)}% de acerto contra {_fmt(r['pct_top5'], 0)}%)"
+                           for _, r in prio.iterrows()) + ". "
+               f"Nas questões fáceis, a escola acerta {_fmt(pior_f['pct_escola'], 0)}% em {pior_f['area_nome']} "
+               f"(Brasil: {_fmt(pior_f['pct_brasil'], 0)}%).")
+        story += [Paragraph(f"{n}. As habilidades que mais limitam a escola.", est["item"]), Paragraph(txt, est["p"])]
+
     if texto_investir and texto_investir.strip():
-        story += [Paragraph("Por que é tão importante investir nisto?", est["h2"])]
-        for par in [p for p in texto_investir.split("\n") if p.strip()]:
-            story.append(Paragraph(par.strip(), est["p"]))
+        bloco = [Paragraph("Por que é tão importante investir nisto?", est["h2"])]
+        bloco += [Paragraph(par.strip(), est["p"]) for par in texto_investir.split("\n") if par.strip()]
+        story.append(KeepTogether(bloco))
 
     # ---------------------------------------------------------------- gráficos
-    story.append(PageBreak())
-    story.append(Paragraph(f"Ranking ENEM {ano} — {mun}/{uf}", est["h2"]))
-    story.append(_grafico_ranking(rk, co_escola, f"Média geral (escolas com ≥ {min_alunos} participantes)"))
-    story.append(Paragraph("Azul: a escola · Dourado: Top 5 · Cinza: demais escolas.", est["nota"]))
+    story.append(KeepTogether([
+        Paragraph(f"Ranking ENEM {ano} — {mun}/{uf}", est["h2"]),
+        _grafico_ranking(rk, co_escola, f"Média geral (escolas com ≥ {min_alunos} participantes)"),
+        Paragraph("Azul: a escola · Dourado: Top 5 · Cinza: demais escolas.", est["nota"])]))
     story.append(KeepTogether([Paragraph("Escola × cinco melhores da cidade, por área", est["h2"]),
                                _grafico_areas(dm.tabela_areas)]))
     if c is not None:
@@ -319,7 +338,40 @@ def gerar_pdf(df: pd.DataFrame, coer: pd.DataFrame | None, co_escola: int, ano: 
                             ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
     story.append(KeepTogether([Paragraph("Metas por área para alcançar o Top 5 da cidade", est["h2"]), tb]))
 
-    story += [Spacer(1, 14), Paragraph(
+    if perf is not None:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("Habilidades prioritárias (Matriz de Referência do ENEM)", est["h2"]))
+        story.append(Paragraph(
+            "Percentual de acerto da escola em cada habilidade, comparado com as cinco melhores escolas da cidade e com o "
+            "Brasil. Ordenado pela maior distância para o Top 5. Anos somados: "
+            + ", ".join(str(a) for a in sorted(df.loc[df['co_escola'] == co_escola, 'ano'].unique())) + ".", est["p"]))
+        cel = ParagraphStyle("cel", parent=est["p"], fontSize=8, leading=10, spaceAfter=0)
+        top = perf.dropna(subset=["gap_top5"]).sort_values("gap_top5", ascending=False).head(12)
+        linhas = [["Hab.", "Descrição", "Escola", "Top 5", "Brasil", "Dist."]] + [
+            [Paragraph(f"<b>{r['area']} H{r['hab']}</b>" + (" *" if r["amostra_pequena"] else ""), cel),
+             Paragraph(r["desc_hab"], cel), f"{r['pct_escola']:.0f}%", f"{r['pct_top5']:.0f}%",
+             f"{r['pct_brasil']:.0f}%", f"{r['gap_top5']:+.0f}"] for _, r in top.iterrows()]
+        tb = Table(linhas, colWidths=[1.7 * cm, 9.6 * cm, 1.5 * cm, 1.4 * cm, 1.5 * cm, 1.3 * cm], repeatRows=1)
+        tb.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), AZUL), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8),
+                                ("ALIGN", (2, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, CLARO]),
+                                ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+        story.append(tb)
+        story.append(Paragraph("* menos de 30 respostas da escola nessa habilidade — resultado instável. "
+                               "Dist. = pontos percentuais abaixo da média das cinco melhores escolas da cidade.", est["nota"]))
+        f = fac.copy()
+        linhas = [["Área", "Acerto nas questões fáceis", "Brasil", "Diferença"]] + [
+            [r["area_nome"], f"{r['pct_escola']:.0f}%", f"{r['pct_brasil']:.0f}%", f"{r['pct_escola'] - r['pct_brasil']:+.0f} p.p."]
+            for _, r in f.iterrows()]
+        tf = Table(linhas, colWidths=[5 * cm, 5 * cm, 3 * cm, 3 * cm])
+        tf.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), AZUL), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 9),
+                                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, CLARO])]))
+        story.append(KeepTogether([Paragraph("Questões fáceis (25% de menor dificuldade na TRI)", est["h2"]), tf]))
+
+    story += [Spacer(1, 8), Paragraph(
         "<b>Metodologia.</b> Fonte: microdados do ENEM (INEP) e Censo Escolar. Média geral = média simples das notas de "
         "Ciências da Natureza, Ciências Humanas, Linguagens, Matemática e Redação dos participantes presentes nos dois dias "
         "que informaram a escola. Rankings consideram escolas com pelo menos "
@@ -366,5 +418,10 @@ if __name__ == "__main__":
     ano = int(sys.argv[2]) if len(sys.argv) > 2 else int(df.loc[df["co_escola"] == co, "ano"].max())
     nome = df.loc[df["co_escola"] == co, "nome"].iloc[0]
     out = Path(__file__).resolve().parent / "relatorios" / nome_arquivo(nome, ano)
-    gerar_pdf(df, coer, co, ano, destino=out)
+    hab = None
+    if (root / "habilidades_escola.parquet").exists():
+        hab = {k: pd.read_parquet(root / f"{k}.parquet") for k in
+               ("habilidades_escola", "habilidades_nacional", "faceis_escola", "faceis_nacional")}
+        hab["matriz"] = pd.read_csv(root.parent / "ref" / "habilidades.csv")
+    gerar_pdf(df, coer, co, ano, destino=out, hab=hab)
     print(out)
