@@ -62,6 +62,11 @@ if escolha_mun is not None:
 deps = st.sidebar.multiselect("Dependência", sorted(df["dependencia"].unique()), default=sorted(df["dependencia"].unique()))
 min_alunos = st.sidebar.slider("Mínimo de participantes por escola", 1, 100, 10,
                                help="Escolas com poucos alunos têm médias muito instáveis.")
+CRITERIOS = {"media_geral": "Média geral", "media_redacao": "Redação", "media_mt": "Matemática",
+             "media_cn": "Ciências da Natureza", "media_ch": "Ciências Humanas", "media_lc": "Linguagens"}
+CRIT = st.sidebar.selectbox("Ranking por", list(CRITERIOS), format_func=CRITERIOS.get,
+                            help="Critério de ordenação dos rankings (abas Ranking geral e Rede Adventista).")
+CRIT_NOME = CRITERIOS[CRIT]
 busca = st.sidebar.text_input("Buscar escola pelo nome")
 so_censo = st.sidebar.checkbox("Ocultar códigos não localizados no Censo", value=True,
                                help="O código da escola no ENEM é autodeclarado; alguns não existem no Censo Escolar.")
@@ -87,18 +92,25 @@ def tabela_ranking(d: pd.DataFrame) -> pd.DataFrame:
     if periodo == "Média de todos os anos":
         t = media_periodo(d, min_alunos, min_anos)
     else:
-        t = d[(d["ano"] == int(periodo)) & (d["n"] >= min_alunos)].sort_values("media_geral", ascending=False)
-    t = t.reset_index(drop=True)
-    t.insert(0, "posição", t["media_geral"].rank(ascending=False, method="min").astype(int))
+        t = d[(d["ano"] == int(periodo)) & (d["n"] >= min_alunos)].sort_values(CRIT, ascending=False)
+    t = t.sort_values(CRIT, ascending=False).reset_index(drop=True)
+    t.insert(0, "posição", t[CRIT].rank(ascending=False, method="min").astype(int))
     return t
 
 
 COLS = {"posição": "Pos.", "nome": "Escola", "municipio": "Município", "uf": "UF", "dependencia": "Rede",
         "n": "Particip.", "media_geral": "Média geral", "media_cn": "CN", "media_ch": "CH", "media_lc": "LC",
-        "media_mt": "MT", "media_redacao": "Redação", "pct_acima_700": "% ≥700", "anos": "Anos"}
+        "media_mt": "MT", "media_redacao": "Redação", "pct_acima_700": "% ≥700",
+        "pct_redacao_900": "% red. ≥900", "anos": "Anos"}
+
+
+def em_pct(t: pd.DataFrame) -> pd.DataFrame:
+    """Converte colunas de proporção (0–1) para 0–100 para exibição."""
+    return t.assign(**{c: t[c] * 100 for c in ("pct_acima_700", "pct_redacao_900") if c in t})
 
 
 def mostrar(t: pd.DataFrame, altura=600):
+    t = em_pct(t)
     if busca:
         t = t[t["nome"].str.contains(busca, case=False, na=False)]
     cols = [c for c in COLS if c in t]
@@ -108,6 +120,7 @@ def mostrar(t: pd.DataFrame, altura=600):
             "Média geral": st.column_config.ProgressColumn(format="%.1f", min_value=300, max_value=850),
             **{k: st.column_config.NumberColumn(format="%.1f") for k in ["CN", "CH", "LC", "MT", "Redação"]},
             "% ≥700": st.column_config.NumberColumn(format="%.0f%%"),
+            "% red. ≥900": st.column_config.NumberColumn(format="%.0f%%"),
         })
     st.download_button("⬇️ Baixar CSV", t[cols].rename(columns=COLS).to_csv(index=False, sep=";", decimal=","),
                        file_name="ranking_enem.csv", mime="text/csv")
@@ -115,7 +128,7 @@ def mostrar(t: pd.DataFrame, altura=600):
 
 local = "Brasil" if uf == "Brasil" else (uf if municipio == "Todos" else f"{municipio}/{uf}")
 st.title("🏫 Ranking ENEM por Escola")
-st.caption(f"Recorte: **{local}** · Período: **{periodo}** · mínimo de {min_alunos} participantes")
+st.caption(f"Ranking por **{CRIT_NOME}** · Recorte: **{local}** · Período: **{periodo}** · mínimo de {min_alunos} participantes")
 
 aba1, aba2, aba3, aba4 = st.tabs(["📊 Ranking geral", "📘 Rede Adventista", "🎯 Como chegar ao Top 5", "ℹ️ Metodologia"])
 
@@ -125,23 +138,23 @@ with aba1:
     pct = lambda s: f"{100*s:.0f}%"  # noqa: E731
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Escolas no ranking", f"{len(rk):,}".replace(",", "."))
-    c2.metric("Média das escolas", f"{rk['media_geral'].mean():.1f}" if len(rk) else "—")
-    c3.metric("Nota de corte do Top 5", f"{rk['media_geral'].iloc[4]:.1f}" if len(rk) >= 5 else "—")
+    c2.metric("Média das escolas", f"{rk[CRIT].mean():.1f}" if len(rk) else "—")
+    c3.metric("Nota de corte do Top 5", f"{rk[CRIT].iloc[4]:.1f}" if len(rk) >= 5 else "—")
     c4.metric("Adventistas no recorte", int(rk["adventista"].sum()) if len(rk) else 0)
     mostrar(rk)
 
     if len(rk):
         g1, g2 = st.columns(2)
         with g1:
-            fig = px.box(rk, x="dependencia", y="media_geral", points=False, title="Distribuição por rede",
-                         labels={"dependencia": "", "media_geral": "Média geral"})
+            fig = px.box(rk, x="dependencia", y=CRIT, points=False, title="Distribuição por rede",
+                         labels={"dependencia": "", CRIT: CRIT_NOME})
             st.plotly_chart(fig, use_container_width=True)
         with g2:
             top = rk.head(15).iloc[::-1]
-            fig = px.bar(top, x="media_geral", y="nome", orientation="h", title="Top 15",
+            fig = px.bar(top, x=CRIT, y="nome", orientation="h", title="Top 15",
                          color="adventista", color_discrete_map={True: "#1f6feb", False: "#9aa4b2"},
-                         labels={"media_geral": "Média geral", "nome": "", "adventista": "Adventista"})
-            fig.update_xaxes(range=[top["media_geral"].min() - 20, top["media_geral"].max() + 5])
+                         labels={CRIT: CRIT_NOME, "nome": "", "adventista": "Adventista"})
+            fig.update_xaxes(range=[top[CRIT].min() - 20, top[CRIT].max() + 5])
             st.plotly_chart(fig, use_container_width=True)
 
 # ------------------------------------------------------------------ adventistas
@@ -160,48 +173,49 @@ with aba2:
         else:
             base = df[(df["ano"] == int(periodo)) & (df["n"] >= min_alunos) & df["dependencia"].isin(deps)]
         base = base.assign(
-            pos_municipio=base.groupby(["uf", "municipio"])["media_geral"].rank(ascending=False, method="min"),
-            pos_uf=base.groupby("uf")["media_geral"].rank(ascending=False, method="min"),
-            pos_brasil=base["media_geral"].rank(ascending=False, method="min"))
-        corte_mun = base.groupby(["uf", "municipio"])["media_geral"].apply(
+            pos_municipio=base.groupby(["uf", "municipio"])[CRIT].rank(ascending=False, method="min"),
+            pos_uf=base.groupby("uf")[CRIT].rank(ascending=False, method="min"),
+            pos_brasil=base[CRIT].rank(ascending=False, method="min"))
+        corte_mun = base.groupby(["uf", "municipio"])[CRIT].apply(
             lambda s: s.nlargest(5).min() if len(s) >= 5 else float("nan")).rename("corte_top5_mun")
-        corte_uf = base.groupby("uf")["media_geral"].apply(lambda s: s.nlargest(5).min()).rename("corte_top5_uf")
+        corte_uf = base.groupby("uf")[CRIT].apply(lambda s: s.nlargest(5).min()).rename("corte_top5_uf")
         rk_adv = (rk_adv.merge(base[["co_escola", "pos_municipio", "pos_uf", "pos_brasil"]], on="co_escola", how="left")
                   .merge(corte_mun, on=["uf", "municipio"], how="left").merge(corte_uf, on="uf", how="left"))
-        rk_adv["falta_top5_mun"] = (rk_adv["corte_top5_mun"] - rk_adv["media_geral"]).clip(lower=0)
-        rk_adv["falta_top5_uf"] = (rk_adv["corte_top5_uf"] - rk_adv["media_geral"]).clip(lower=0)
+        rk_adv["falta_top5_mun"] = (rk_adv["corte_top5_mun"] - rk_adv[CRIT]).clip(lower=0)
+        rk_adv["falta_top5_uf"] = (rk_adv["corte_top5_uf"] - rk_adv[CRIT]).clip(lower=0)
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Escolas adventistas", len(rk_adv))
-        c2.metric("Média da rede", f"{rk_adv['media_geral'].mean():.1f}" if len(rk_adv) else "—")
+        c2.metric("Média da rede", f"{rk_adv[CRIT].mean():.1f}" if len(rk_adv) else "—")
         c3.metric("No Top 5 do município", int((rk_adv["pos_municipio"] <= 5).sum()))
         c4.metric("No Top 5 do estado", int((rk_adv["pos_uf"] <= 5).sum()))
 
-        t = rk_adv.copy()
+        t = em_pct(rk_adv)
         if busca:
             t = t[t["nome"].str.contains(busca, case=False, na=False)]
         st.dataframe(
-            t[["posição", "nome", "municipio", "uf", "n", "media_geral", "media_mt", "media_redacao",
+            t[["posição", "nome", "municipio", "uf", "n", "media_geral", "media_mt", "media_redacao", "pct_redacao_900",
                "pos_municipio", "falta_top5_mun", "pos_uf", "falta_top5_uf", "pos_brasil"]].rename(columns={
                 **COLS, "pos_municipio": "Pos. município", "falta_top5_mun": "Falta p/ Top 5 mun.",
                 "pos_uf": "Pos. UF", "falta_top5_uf": "Falta p/ Top 5 UF", "pos_brasil": "Pos. Brasil"}),
             hide_index=True, use_container_width=True, height=550,
             column_config={c: st.column_config.NumberColumn(format="%.1f") for c in
                            ["Média geral", "MT", "Redação", "Falta p/ Top 5 mun.", "Falta p/ Top 5 UF"]}
-            | {c: st.column_config.NumberColumn(format="%d") for c in ["Pos. município", "Pos. UF", "Pos. Brasil"]})
+            | {c: st.column_config.NumberColumn(format="%d") for c in ["Pos. município", "Pos. UF", "Pos. Brasil"]}
+           | {"% red. ≥900": st.column_config.NumberColumn(format="%.0f%%")})
         st.download_button("⬇️ Baixar CSV (adventistas)", t.to_csv(index=False, sep=";", decimal=","),
                            file_name="ranking_adventistas.csv", mime="text/csv")
 
         # evolução da rede x demais privadas
         evo = (df[df["n"] >= min_alunos].assign(grupo=lambda d: d["adventista"].map({True: "Adventistas", False: None})
                                                 .fillna(d["dependencia"]))
-               .groupby(["ano", "grupo"]).apply(lambda g: (g["media_geral"] * g["n"]).sum() / g["n"].sum())
+               .groupby(["ano", "grupo"]).apply(lambda g: (g[CRIT] * g["n"]).sum() / g["n"].sum())
                .rename("media").reset_index())
         if uf != "Brasil":
             st.caption("Gráfico de evolução considera o Brasil inteiro.")
         fig = px.line(evo, x="ano", y="media", color="grupo", markers=True,
-                      title="Evolução da média (ponderada por participantes)",
-                      labels={"media": "Média geral", "ano": "Ano", "grupo": ""})
+                      title=f"Evolução — {CRIT_NOME} (média ponderada por participantes)",
+                      labels={"media": CRIT_NOME, "ano": "Ano", "grupo": ""})
         fig.update_xaxes(dtick=1)
         st.plotly_chart(fig, use_container_width=True)
 
