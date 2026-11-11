@@ -155,3 +155,75 @@ def _recomendacoes(eu, t, gap, te, tc, anos_est, total) -> list[str]:
             rec.append(f"No ritmo atual (escola {te:+.1f} pts/ano vs. corte {tc:+.1f} pts/ano) a distância não está "
                        "diminuindo — é preciso acelerar a evolução anual.")
     return rec
+
+
+# ============================================================================ habilidades
+NOME_AREA = {"CN": "Ciências da Natureza", "CH": "Ciências Humanas", "LC": "Linguagens", "MT": "Matemática"}
+
+
+def _pct(d: pd.DataFrame, chaves: list[str], nome: str) -> pd.DataFrame:
+    d = d.astype({"acertos": "int64", "respostas": "int64", "area": "object"})  # evita overflow de int16
+    g = d.groupby(chaves)[["acertos", "respostas"]].sum()
+    g[nome] = g["acertos"] / g["respostas"] * 100
+    return g[[nome]] if nome != "pct_escola" else g.rename(columns={"respostas": "respostas_escola"})[[nome, "respostas_escola"]]
+
+
+def top5_cidade(df: pd.DataFrame, co_escola: int, ano: int, min_alunos: int = 10, escopo: str = "municipio") -> list[int]:
+    """Códigos das 5 melhores escolas (média geral) da cidade ou do estado, excluindo a própria escola."""
+    eu = df[(df["co_escola"] == co_escola) & (df["ano"] == ano)].iloc[0]
+    m = (df["ano"] == ano) & (df["uf"] == eu["uf"]) & (df["n"] >= min_alunos) & (df["co_escola"] != co_escola)
+    if escopo == "municipio":
+        m &= df["municipio"] == eu["municipio"]
+    c = df[m]
+    return c.nlargest(5, "media_geral")["co_escola"].tolist()
+
+
+def perfil_habilidades(hab_esc: pd.DataFrame, hab_nac: pd.DataFrame, df: pd.DataFrame, matriz: pd.DataFrame,
+                       co_escola: int, anos: list[int], ano_ref: int, min_alunos: int = 10,
+                       escopo: str = "municipio") -> pd.DataFrame:
+    """% de acerto por habilidade: escola × Brasil × UF × Top 5 da cidade (anos agregados)."""
+    he = hab_esc[hab_esc["ano"].isin(anos)]
+    eu = df[(df["co_escola"] == co_escola) & (df["ano"] == ano_ref)].iloc[0]
+    k = ["area", "hab"]
+    esc = _pct(he[he["co_escola"] == co_escola], k, "pct_escola")
+    br = _pct(hab_nac[hab_nac["ano"].isin(anos)], k, "pct_brasil")
+    esc_uf = set(df.loc[df["uf"] == eu["uf"], "co_escola"])
+    uf = _pct(he[he["co_escola"].isin(esc_uf)], k, "pct_uf")
+    t5 = top5_cidade(df, co_escola, ano_ref, min_alunos, escopo)
+    top = _pct(he[he["co_escola"].isin(t5)], k, "pct_top5")
+    out = esc.join([br, uf, top]).reset_index()
+    out = out.merge(matriz, on=["area", "hab"], how="left")
+    out["gap_top5"] = out["pct_top5"] - out["pct_escola"]
+    out["gap_brasil"] = out["pct_brasil"] - out["pct_escola"]
+    out["area_nome"] = out["area"].map(NOME_AREA)
+    out["rotulo"] = out["area"] + " · H" + out["hab"].astype(str)
+    out["amostra_pequena"] = out["respostas_escola"] < 30
+    # ≈ questões dessa habilidade por aluno no período e acertos a mais por aluno se igualasse o Top 5
+    alunos = df[(df["co_escola"] == co_escola) & df["ano"].isin(anos)]["n"].sum()
+    out["questoes_por_aluno"] = out["respostas_escola"] / alunos if alunos else np.nan
+    out["acertos_a_mais"] = (out["gap_top5"].clip(lower=0) / 100 * out["questoes_por_aluno"])
+    return out
+
+
+def perfil_competencias(perfil: pd.DataFrame, hab_esc: pd.DataFrame, co_escola: int, anos: list[int]) -> pd.DataFrame:
+    """Agrega o perfil por competência (ponderando pelo nº de respostas da escola)."""
+    p = perfil.copy()
+    w = p["respostas_escola"]
+    cols = ["pct_escola", "pct_brasil", "pct_uf", "pct_top5"]
+    for c in cols:
+        p[c] = p[c] * w
+    g = p.groupby(["area", "area_nome", "competencia", "desc_competencia"], dropna=False)
+    out = g[cols].sum().div(g["respostas_escola"].sum(), axis=0)
+    out["respostas_escola"] = g["respostas_escola"].sum()
+    out = out.reset_index()
+    out["gap_top5"] = out["pct_top5"] - out["pct_escola"]
+    return out
+
+
+def itens_faceis(fac_esc: pd.DataFrame, fac_nac: pd.DataFrame, co_escola: int, anos: list[int]) -> pd.DataFrame:
+    e = fac_esc[(fac_esc["co_escola"] == co_escola) & fac_esc["ano"].isin(anos)].groupby("area")[["acertos", "respostas"]].sum()
+    n = fac_nac[fac_nac["ano"].isin(anos)].groupby("area")[["acertos", "respostas"]].sum()
+    out = pd.DataFrame({"pct_escola": e["acertos"] / e["respostas"] * 100, "pct_brasil": n["acertos"] / n["respostas"] * 100})
+    out["erros_escola"] = 100 - out["pct_escola"]
+    out["area_nome"] = out.index.map(NOME_AREA)
+    return out.reset_index()
