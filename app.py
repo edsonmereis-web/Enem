@@ -30,24 +30,24 @@ MATRIZ = next((p for p in (ROOT / "data" / "ref" / "habilidades.csv", ROOT / "ha
 st.set_page_config(page_title="Ranking ENEM por Escola", page_icon="🏫", layout="wide")
 
 
-@st.cache_data
+@st.cache_resource(max_entries=4)
 def dados(mtime: float) -> pd.DataFrame:  # mtime invalida o cache quando o parquet é regerado
     return carregar(DADOS)
 
 
-@st.cache_data
+@st.cache_resource(max_entries=4)
 def dados_habilidades(mtime: float) -> dict:
     out = {k: pd.read_parquet(p) for k, p in HAB.items()}
     out["matriz"] = pd.read_csv(MATRIZ)
     return out
 
 
-@st.cache_data
+@st.cache_resource(max_entries=4)
 def dados_questoes(ano: int, mtime: float) -> pd.DataFrame:
     return pd.read_parquet(_achar(f"questoes_escola_{ano}.parquet"))
 
 
-@st.cache_data
+@st.cache_resource(max_entries=4)
 def itens_questoes(mtime: float) -> pd.DataFrame:
     return pd.read_parquet(ITENS_Q)
 
@@ -56,7 +56,7 @@ def tem_habilidades() -> bool:
     return MATRIZ is not None and all(p.exists() for p in HAB.values())
 
 
-@st.cache_data
+@st.cache_resource(max_entries=4)
 def dados_coerencia(mtime: float) -> pd.DataFrame:
     return pd.read_parquet(COER)
 
@@ -138,7 +138,7 @@ def mostrar(t: pd.DataFrame, altura=600):
         t = t[t["nome"].str.contains(busca, case=False, na=False)]
     cols = [c for c in COLS if c in t]
     st.dataframe(
-        t[cols].rename(columns=COLS), height=altura, hide_index=True, use_container_width=True,
+        t[cols].rename(columns=COLS), height=altura, hide_index=True, width="stretch",
         column_config={
             "Média geral": st.column_config.ProgressColumn(format="%.1f", min_value=300, max_value=850),
             **{k: st.column_config.NumberColumn(format="%.1f") for k in ["CN", "CH", "LC", "MT", "Redação"]},
@@ -176,14 +176,14 @@ with aba1:
         with g1:
             fig = px.box(rk, x="dependencia", y=CRIT, points=False, title="Distribuição por rede",
                          labels={"dependencia": "", CRIT: CRIT_NOME})
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         with g2:
             top = rk.head(15).iloc[::-1]
             fig = px.bar(top, x=CRIT, y="nome", orientation="h", title="Top 15",
                          color="adventista", color_discrete_map={True: "#1f6feb", False: "#9aa4b2"},
                          labels={CRIT: CRIT_NOME, "nome": "", "adventista": "Adventista"})
             fig.update_xaxes(range=[top[CRIT].min() - 20, top[CRIT].max() + 5])
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 # ------------------------------------------------------------------ adventistas
 with aba2:
@@ -226,7 +226,7 @@ with aba2:
                "pos_municipio", "falta_top5_mun", "pos_uf", "falta_top5_uf", "pos_brasil"]].rename(columns={
                 **COLS, "pos_municipio": "Pos. município", "falta_top5_mun": "Falta p/ Top 5 mun.",
                 "pos_uf": "Pos. UF", "falta_top5_uf": "Falta p/ Top 5 UF", "pos_brasil": "Pos. Brasil"}),
-            hide_index=True, use_container_width=True, height=550,
+            hide_index=True, width="stretch", height=550,
             column_config={c: st.column_config.NumberColumn(format="%.1f") for c in
                            ["Média geral", "MT", "Redação", "Falta p/ Top 5 mun.", "Falta p/ Top 5 UF"]}
             | {c: st.column_config.NumberColumn(format="%d") for c in ["Pos. município", "Pos. UF", "Pos. Brasil"]}
@@ -245,7 +245,7 @@ with aba2:
                       title=f"Evolução — {CRIT_NOME} (média ponderada por participantes)",
                       labels={"media": CRIT_NOME, "ano": "Ano", "grupo": ""})
         fig.update_xaxes(dtick=1)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 # ------------------------------------------------------------------ top 5
 with aba3:
@@ -286,14 +286,14 @@ with aba3:
                             marker_color="#9aa4b2")
                 fig.update_layout(barmode="group", title="Escola × Top 5 por área", height=330,
                                   legend=dict(orientation="h", y=-0.2), margin=dict(t=40, b=10))
-                st.plotly_chart(fig, use_container_width=True, key=f"areas_{escopo}")
+                st.plotly_chart(fig, width="stretch", key=f"areas_{escopo}")
 
                 if d.gap > 0:
                     st.markdown("**Meta por área** (distribuída onde a distância para as líderes é maior)")
                     st.dataframe(d.tabela_areas[["area", "escola", "media_top5", "gap_top5", "ganho_necessario"]]
                                  .rename(columns={"area": "Área", "escola": "Escola", "media_top5": "Top 5",
                                                   "gap_top5": "Distância", "ganho_necessario": "Meta de ganho"}),
-                                 hide_index=True, use_container_width=True,
+                                 hide_index=True, width="stretch",
                                  column_config={c: st.column_config.NumberColumn(format="%.1f") for c in
                                                 ["Escola", "Top 5", "Distância", "Meta de ganho"]})
 
@@ -305,11 +305,11 @@ with aba3:
                 fig.add_scatter(x=h["ano"], y=h["lider"], name="1º lugar", mode="lines+markers", line_color="#9aa4b2")
                 fig.update_layout(title="Evolução: escola × corte do Top 5", height=330, xaxis_dtick=1,
                                   legend=dict(orientation="h", y=-0.2), margin=dict(t=40, b=10))
-                st.plotly_chart(fig, use_container_width=True, key=f"hist_{escopo}")
+                st.plotly_chart(fig, width="stretch", key=f"hist_{escopo}")
 
                 with st.expander("Ver Top 5 atual"):
                     st.dataframe(d.top5[["posicao", "nome", "dependencia", "n", "media_geral", "media_mt", "media_redacao"]]
-                                 .rename(columns={"posicao": "Pos.", **COLS}), hide_index=True, use_container_width=True)
+                                 .rename(columns={"posicao": "Pos.", **COLS}), hide_index=True, width="stretch")
 
         # -------------------------------------------------------------- descritores com maior déficit
         st.divider()
@@ -344,7 +344,7 @@ with aba3:
                                "acertos_a_mais"]].rename(columns={
                             "desc_hab": "Descrição", "pct_escola": "Escola %", "pct_top5": "Top 5 %",
                             "pct_brasil": "Brasil %", "gap_top5": "Déficit (p.p.)", "acertos_a_mais": "Acertos a mais"}),
-                        hide_index=True, use_container_width=True, height=min(38 * (len(top_d) + 1), 600),
+                        hide_index=True, width="stretch", height=min(38 * (len(top_d) + 1), 600),
                         column_config={c: st.column_config.NumberColumn(format="%.0f") for c in
                                        ["Escola %", "Top 5 %", "Brasil %", "Déficit (p.p.)"]}
                         | {"Acertos a mais": st.column_config.NumberColumn(format="%.2f"),
@@ -357,7 +357,7 @@ with aba3:
                                            hovertemplate="%{y}: %{x:.0f} p.p.<br>%{customdata[0]}<extra></extra>"))
                     fig.update_layout(title="Déficit vs Top 5 (pontos percentuais)", height=max(300, 28 * len(gd) + 80),
                                       margin=dict(t=40, l=10, r=10, b=10), xaxis_title="p.p.")
-                    st.plotly_chart(fig, use_container_width=True, key="desc_fig")
+                    st.plotly_chart(fig, width="stretch", key="desc_fig")
                 por_area = (pdesc[pdesc["gap_top5"] > 0].groupby("area")
                             .agg(descritores=("hab", "size"), acertos=("acertos_a_mais", "sum")).reset_index())
                 if len(por_area):
@@ -429,7 +429,7 @@ with aba5:
                                "respostas_escola"]].rename(columns={
                 "desc_hab": "Descrição", "pct_escola": "Escola %", "pct_top5": "Top 5 cidade %",
                 "pct_brasil": "Brasil %", "gap_top5": "Distância (p.p.)", "respostas_escola": "Respostas"}),
-                hide_index=True, use_container_width=True,
+                hide_index=True, width="stretch",
                 column_config={c: st.column_config.NumberColumn(format="%.0f") for c in
                                ["Escola %", "Top 5 cidade %", "Brasil %", "Distância (p.p.)"]}
                 | {"Descrição": st.column_config.TextColumn(width="large")})
@@ -445,14 +445,14 @@ with aba5:
                             marker=dict(color="#6b7280", size=7))
             fig.update_layout(title=f"{NOME_AREA[area_sel]} — % de acerto por habilidade", height=380,
                               yaxis_title="% de acerto", legend=dict(orientation="h", y=-0.2), margin=dict(t=40))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             comp = perfil_competencias(pa, None, esc_h, anos_sel)
             st.markdown("**Por competência**")
             st.dataframe(comp[["competencia", "desc_competencia", "pct_escola", "pct_top5", "pct_brasil", "gap_top5"]]
                          .rename(columns={"competencia": "C", "desc_competencia": "Competência", "pct_escola": "Escola %",
                                           "pct_top5": "Top 5 %", "pct_brasil": "Brasil %", "gap_top5": "Distância"}),
-                         hide_index=True, use_container_width=True,
+                         hide_index=True, width="stretch",
                          column_config={c: st.column_config.NumberColumn(format="%.0f") for c in
                                         ["Escola %", "Top 5 %", "Brasil %", "Distância"]})
             st.download_button("⬇️ Baixar CSV (todas as habilidades)", perf.to_csv(index=False, sep=";", decimal=","),
@@ -521,7 +521,7 @@ with aba6:
                                   margin=dict(t=70, l=10, r=30, b=30), uniformtext_minsize=8)
                 fig.update_xaxes(range=[0, 108], ticksuffix="%", dtick=10, side="top", gridcolor="#eef0f3")
                 fig.update_yaxes(autorange="reversed", categoryorder="array", categoryarray=g["rotulo"].tolist())
-                st.plotly_chart(fig, use_container_width=True, key="fig_q")
+                st.plotly_chart(fig, width="stretch", key="fig_q")
 
                 tab = r.assign(Habilidade="H" + r["hab"].astype(str), area=NOME_AREA[area_q])
                 tab = tab[["rotulo", "Habilidade", "gabarito", "pct_escola", "pct_outras", "diferenca", "pct_brasil",
@@ -530,7 +530,7 @@ with aba6:
                     "diferenca": "Diferença (p.p.)", "pct_brasil": "Brasil %", "dificuldade": "Dificuldade TRI",
                     "respostas_escola": "Respostas"})
                 with st.expander("Ver tabela"):
-                    st.dataframe(tab, hide_index=True, use_container_width=True,
+                    st.dataframe(tab, hide_index=True, width="stretch",
                                  column_config={c: st.column_config.NumberColumn(format="%.0f") for c in
                                                 ["Escola %", "Demais escolas %", "Diferença (p.p.)", "Brasil %"]}
                                  | {"Dificuldade TRI": st.column_config.NumberColumn(format="%.2f")})
