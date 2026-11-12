@@ -30,11 +30,7 @@ CINZA = colors.HexColor("#6b7280")
 CLARO = colors.HexColor("#eef2f8")
 AZUL_MPL, CINZA_MPL, OURO_MPL = "#1f4e8c", "#b8c0cc", "#d29922"
 
-TEXTO_PADRAO_INVESTIR = (
-    "O SESI de Duque de Caxias, em seis anos, saiu da última posição para o 1º lugar no ENEM da cidade. "
-    "Isso resultou em ganho de 174 alunos em 2024, com um aumento de receita de R$ 1,9 milhão. "
-    "Um valor que supera em muitas vezes o investimento necessário para implementar uma solução como o dudow."
-)
+TEXTO_PADRAO_INVESTIR = ""  # texto livre, preenchido no painel (vazio = seção omitida)
 
 
 def _fmt(x: float, casas: int = 1) -> str:

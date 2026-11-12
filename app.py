@@ -6,8 +6,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from analise import (AREAS, NOME_AREA, carregar, diagnostico_top5, itens_faceis, media_periodo, perfil_competencias,
-                     perfil_habilidades, ranquear)
+from analise import (AREAS, NOME_AREA, acerto_questoes, carregar, diagnostico_top5, itens_faceis, media_periodo,
+                     perfil_competencias, perfil_habilidades, ranquear)
 from relatorio import TEXTO_PADRAO_INVESTIR, gerar_pdf, nome_arquivo
 
 ROOT = Path(__file__).resolve().parent
@@ -24,6 +24,7 @@ def _achar(nome: str) -> Path:
 DADOS = _achar("escolas_ano.parquet")
 COER = _achar("coerencia_escola.parquet")
 HAB = {k: _achar(f"{k}.parquet") for k in ("habilidades_escola", "habilidades_nacional", "faceis_escola", "faceis_nacional")}
+ITENS_Q = _achar("questoes_itens.parquet")
 MATRIZ = next((p for p in (ROOT / "data" / "ref" / "habilidades.csv", ROOT / "habilidades.csv") if p.exists()), None)
 
 st.set_page_config(page_title="Ranking ENEM por Escola", page_icon="🏫", layout="wide")
@@ -39,6 +40,16 @@ def dados_habilidades(mtime: float) -> dict:
     out = {k: pd.read_parquet(p) for k, p in HAB.items()}
     out["matriz"] = pd.read_csv(MATRIZ)
     return out
+
+
+@st.cache_data
+def dados_questoes(ano: int, mtime: float) -> pd.DataFrame:
+    return pd.read_parquet(_achar(f"questoes_escola_{ano}.parquet"))
+
+
+@st.cache_data
+def itens_questoes(mtime: float) -> pd.DataFrame:
+    return pd.read_parquet(ITENS_Q)
 
 
 def tem_habilidades() -> bool:
@@ -61,18 +72,16 @@ anos = sorted(df["ano"].unique())
 st.sidebar.header("Filtros")
 periodo = st.sidebar.selectbox("Período", ["Média de todos os anos"] + [str(a) for a in reversed(anos)], index=1)
 ufs = sorted(df["uf"].dropna().unique())
-uf = st.sidebar.selectbox("UF", ["Brasil"] + ufs)
-# Município sempre disponível: com UF = Brasil lista todos os municípios do país ("Cidade/UF").
+ufs_sel = st.sidebar.multiselect("UF", ufs, placeholder="Brasil (todas)",
+                                 help="Escolha uma ou mais UFs. Vazio = Brasil inteiro.")
+# Município sempre disponível: sem UF escolhida lista todos os municípios do país ("Cidade/UF").
 pares = df[["uf", "municipio"]].dropna().drop_duplicates()
-if uf != "Brasil":
-    pares = pares[pares["uf"] == uf]
+if ufs_sel:
+    pares = pares[pares["uf"].isin(ufs_sel)]
 pares = sorted(map(tuple, pares[["municipio", "uf"]].values))
-escolha_mun = st.sidebar.selectbox(
-    "Município", [None] + pares, format_func=lambda p: "Todos" if p is None else (p[0] if uf != "Brasil" else f"{p[0]}/{p[1]}"),
-    help="Digite para pesquisar. Com UF = Brasil, aparecem os municípios de todo o país.")
-municipio = "Todos"
-if escolha_mun is not None:
-    municipio, uf = escolha_mun
+muns_sel = st.sidebar.multiselect(
+    "Município", pares, format_func=lambda p: f"{p[0]}/{p[1]}", placeholder="Todos",
+    help="Digite para pesquisar; escolha um ou mais municípios. Vazio = todos.")
 deps = st.sidebar.multiselect("Dependência", sorted(df["dependencia"].unique()), default=sorted(df["dependencia"].unique()))
 min_alunos = st.sidebar.slider("Mínimo de participantes por escola", 1, 100, 10,
                                help="Escolas com poucos alunos têm médias muito instáveis.")
@@ -93,10 +102,10 @@ st.sidebar.caption(f"Anos com código de escola nos microdados: {', '.join(map(s
 
 
 def recorte(d: pd.DataFrame) -> pd.DataFrame:
-    if uf != "Brasil":
-        d = d[d["uf"] == uf]
-    if municipio != "Todos":
-        d = d[d["municipio"] == municipio]
+    if ufs_sel:
+        d = d[d["uf"].isin(ufs_sel)]
+    if muns_sel:
+        d = d[pd.MultiIndex.from_frame(d[["municipio", "uf"]]).isin(muns_sel)]
     if so_censo and "no_censo" in d:
         d = d[d["no_censo"]]
     return d[d["dependencia"].isin(deps)]
@@ -140,12 +149,16 @@ def mostrar(t: pd.DataFrame, altura=600):
                        file_name="ranking_enem.csv", mime="text/csv")
 
 
-local = "Brasil" if uf == "Brasil" else (uf if municipio == "Todos" else f"{municipio}/{uf}")
+def _lista(xs: list[str], n: int = 4) -> str:
+    return ", ".join(xs) if len(xs) <= n else ", ".join(xs[:n]) + f" e mais {len(xs) - n}"
+
+
+local = (_lista([f"{m}/{u}" for m, u in muns_sel]) if muns_sel else _lista(ufs_sel) if ufs_sel else "Brasil")
 st.title("🏫 Ranking ENEM por Escola")
 st.caption(f"Ranking por **{CRIT_NOME}** · Recorte: **{local}** · Período: **{periodo}** · mínimo de {min_alunos} participantes")
 
-aba1, aba2, aba3, aba5, aba4 = st.tabs(["📊 Ranking geral", "📘 Rede Adventista", "🎯 Como chegar ao Top 5",
-                                        "🧩 Habilidades", "ℹ️ Metodologia"])
+aba1, aba2, aba3, aba5, aba6, aba4 = st.tabs(["📊 Ranking geral", "📘 Rede Adventista", "🎯 Como chegar ao Top 5",
+                                              "🧩 Habilidades", "❓ Acerto por questão", "ℹ️ Metodologia"])
 
 # ------------------------------------------------------------------ ranking geral
 with aba1:
@@ -226,7 +239,7 @@ with aba2:
                                                 .fillna(d["dependencia"]))
                .groupby(["ano", "grupo"]).apply(lambda g: (g[CRIT] * g["n"]).sum() / g["n"].sum())
                .rename("media").reset_index())
-        if uf != "Brasil":
+        if ufs_sel or muns_sel:
             st.caption("Gráfico de evolução considera o Brasil inteiro.")
         fig = px.line(evo, x="ano", y="media", color="grupo", markers=True,
                       title=f"Evolução — {CRIT_NOME} (média ponderada por participantes)",
@@ -444,6 +457,85 @@ with aba5:
                                         ["Escola %", "Top 5 %", "Brasil %", "Distância"]})
             st.download_button("⬇️ Baixar CSV (todas as habilidades)", perf.to_csv(index=False, sep=";", decimal=","),
                                file_name="habilidades_escola.csv", mime="text/csv")
+
+# ------------------------------------------------------------------ acerto por questão
+with aba6:
+    st.subheader("Taxa de acerto por questão")
+    anos_q = [a for a in anos if _achar(f"questoes_escola_{a}.parquet").exists()]
+    if not ITENS_Q.exists() or not anos_q:
+        st.info("Rode `python questoes.py` para gerar o acerto por questão.")
+    else:
+        so_adv_q = st.toggle("Listar apenas escolas adventistas", value=True, key="adv_q")
+        cand_q = recorte(df[df["adventista"]] if so_adv_q else df)
+        cand_q = cand_q.sort_values("ano").drop_duplicates("co_escola", keep="last").sort_values(["uf", "municipio", "nome"])
+        if busca:
+            cand_q = cand_q[cand_q["nome"].str.contains(busca, case=False, na=False)]
+        if cand_q.empty:
+            st.info("Nenhuma escola no recorte. Ajuste os filtros na barra lateral.")
+        else:
+            op_q = dict(zip(cand_q["co_escola"], cand_q["nome"] + " — " + cand_q["municipio"] + "/" + cand_q["uf"]))
+            q1, q2, q3 = st.columns([3, 1, 2])
+            esc_q = q1.selectbox("Escola", list(op_q), format_func=op_q.get, key="esc_q")
+            anos_eq = sorted(set(df.loc[df["co_escola"] == esc_q, "ano"]) & set(anos_q), reverse=True)
+            anos_eq = anos_eq or anos_q[::-1]
+            pref = None if periodo == "Média de todos os anos" else int(periodo)
+            ano_q = q2.selectbox("Ano", anos_eq, index=anos_eq.index(pref) if pref in anos_eq else 0, key="ano_q")
+            ordem = q3.radio("Ordenar por", ["questao", "diferenca"], horizontal=True, key="ordem_q",
+                             format_func={"questao": "Nº da questão", "diferenca": "Maior desvantagem"}.get)
+            area_q = st.radio("Área", list(NOME_AREA), format_func=NOME_AREA.get, horizontal=True, key="area_q")
+
+            base_q = recorte(df)
+            outras = base_q.loc[(base_q["ano"] == ano_q) & (base_q["n"] >= min_alunos) & (base_q["co_escola"] != esc_q),
+                                "co_escola"].tolist()
+            itq = itens_questoes(ITENS_Q.stat().st_mtime)
+            qa = dados_questoes(int(ano_q), _achar(f"questoes_escola_{ano_q}.parquet").stat().st_mtime)
+            r = acerto_questoes(qa, itq, esc_q, outras, area_q, int(ano_q))
+            if r.empty:
+                st.info("A escola não tem respostas nesta área/ano.")
+            else:
+                n_al = int(df.loc[(df["co_escola"] == esc_q) & (df["ano"] == ano_q), "n"].iloc[0])
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Acerto médio da escola", f"{r['pct_escola'].mean():.0f}%")
+                m2.metric("Média das demais escolas", f"{r['pct_outras'].mean():.0f}%" if r["pct_outras"].notna().any()
+                          else "—", f"escola {r['diferenca'].mean():+.0f} p.p." if r["pct_outras"].notna().any() else None,
+                          delta_color="off")
+                m3.metric("Escolas comparadas", f"{len(outras):,}".replace(",", "."))
+                m4.metric("Questões abaixo da média", f"{int((r['diferenca'] < 0).sum())} de {len(r)}")
+                st.caption(f"Recorte de comparação: **{local}** · {ano_q} · escolas com ≥ {min_alunos} participantes "
+                           "(filtros da barra lateral), exceto a escolhida; média simples entre escolas. "
+                           f"Numeração do caderno **azul**. A escola teve {n_al} participantes no ENEM {ano_q}.")
+                g = r.sort_values(["questao", "lingua"] if ordem == "questao" else "diferenca", na_position="last")
+                cd = g[["hab", "gabarito", "pct_brasil", "dificuldade", "respostas_escola"]].to_numpy()
+                hov = ("<b>%{y}</b> · H%{customdata[0]} · gabarito %{customdata[1]}<br>%{x:.0f}% de acerto"
+                       "<br>Brasil: %{customdata[2]:.0f}% · dificuldade TRI %{customdata[3]:.2f}<extra></extra>")
+                fig = go.Figure()
+                fig.add_bar(y=g["rotulo"], x=g["pct_escola"], name="Escola", orientation="h", marker_color="#1f6feb",
+                            text=g["pct_escola"].map("{:.0f}%".format), textposition="outside", customdata=cd,
+                            hovertemplate=hov)
+                fig.add_bar(y=g["rotulo"], x=g["pct_outras"], name="Média das demais escolas do filtro",
+                            orientation="h", marker_color="#d5dae1",
+                            text=g["pct_outras"].map(lambda v: "" if pd.isna(v) else f"{v:.0f}%"),
+                            textposition="outside", textfont=dict(color="#9aa4b2"), customdata=cd, hovertemplate=hov)
+                fig.update_layout(barmode="group", bargap=0.35, bargroupgap=0.05, height=60 + 38 * len(g),
+                                  legend=dict(orientation="h", y=1, yanchor="top", x=0, yref="container"),
+                                  margin=dict(t=70, l=10, r=30, b=30), uniformtext_minsize=8)
+                fig.update_xaxes(range=[0, 108], ticksuffix="%", dtick=10, side="top", gridcolor="#eef0f3")
+                fig.update_yaxes(autorange="reversed", categoryorder="array", categoryarray=g["rotulo"].tolist())
+                st.plotly_chart(fig, use_container_width=True, key="fig_q")
+
+                tab = r.assign(Habilidade="H" + r["hab"].astype(str), area=NOME_AREA[area_q])
+                tab = tab[["rotulo", "Habilidade", "gabarito", "pct_escola", "pct_outras", "diferenca", "pct_brasil",
+                           "dificuldade", "respostas_escola"]].rename(columns={
+                    "rotulo": "Questão", "gabarito": "Gabarito", "pct_escola": "Escola %", "pct_outras": "Demais escolas %",
+                    "diferenca": "Diferença (p.p.)", "pct_brasil": "Brasil %", "dificuldade": "Dificuldade TRI",
+                    "respostas_escola": "Respostas"})
+                with st.expander("Ver tabela"):
+                    st.dataframe(tab, hide_index=True, use_container_width=True,
+                                 column_config={c: st.column_config.NumberColumn(format="%.0f") for c in
+                                                ["Escola %", "Demais escolas %", "Diferença (p.p.)", "Brasil %"]}
+                                 | {"Dificuldade TRI": st.column_config.NumberColumn(format="%.2f")})
+                st.download_button("⬇️ Baixar CSV (acerto por questão)", tab.to_csv(index=False, sep=";", decimal=","),
+                                   file_name=f"acerto_questoes_{esc_q}_{ano_q}_{area_q}.csv", mime="text/csv")
 
 # ------------------------------------------------------------------ metodologia
 with aba4:

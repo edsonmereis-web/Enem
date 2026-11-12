@@ -227,3 +227,29 @@ def itens_faceis(fac_esc: pd.DataFrame, fac_nac: pd.DataFrame, co_escola: int, a
     out["erros_escola"] = 100 - out["pct_escola"]
     out["area_nome"] = out.index.map(NOME_AREA)
     return out.reset_index()
+
+
+LINGUA = {-1: "", 0: " (Inglês)", 1: " (Espanhol)"}
+
+
+def acerto_questoes(q_ano: pd.DataFrame, itens: pd.DataFrame, co_escola: int, outras: list[int],
+                    area: str, ano: int) -> pd.DataFrame:
+    """% de acerto por questão: escola × média simples das `outras` escolas (cada escola pesa igual) × Brasil.
+
+    q_ano: questoes_escola_<ano> (co_escola, questao, lingua, acertos, respostas); itens: questoes_itens.
+    """
+    it = itens[(itens["ano"] == ano) & (itens["area"] == area)].copy()
+    chave = ["questao", "lingua"]
+    q = q_ano[q_ano["questao"].isin(it["questao"])]
+    esc = q[q["co_escola"] == co_escola].copy()
+    esc["pct_escola"] = esc["acertos"].astype("int64") / esc["respostas"] * 100
+    out = q[q["co_escola"].isin(set(outras)) & (q["respostas"] > 0)].copy()
+    out["pct"] = out["acertos"].astype("int64") / out["respostas"] * 100
+    med = out.groupby(chave).agg(pct_outras=("pct", "mean"), n_outras=("co_escola", "nunique")).reset_index()
+    it["pct_brasil"] = it["acertos"] / it["respostas"].where(it["respostas"] > 0) * 100
+    r = (it.merge(esc[chave + ["pct_escola", "respostas"]].rename(columns={"respostas": "respostas_escola"}),
+                  on=chave, how="left").merge(med, on=chave, how="left"))
+    r = r[r["respostas_escola"].fillna(0) > 0].sort_values(chave)
+    r["rotulo"] = "Q" + r["questao"].astype(str) + r["lingua"].map(LINGUA)
+    r["diferenca"] = r["pct_escola"] - r["pct_outras"]
+    return r.reset_index(drop=True)

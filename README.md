@@ -40,7 +40,7 @@ Outros detalhes:
 - No painel: aba **Como chegar ao Top 5** → escolha a escola → **Gerar relatório PDF** → **Baixar PDF**.
 - Linha de comando: `.venv/bin/python relatorio.py <CO_ESCOLA> [ano]` → `relatorios/`.
 - Referência de coerência: *percentil 75* (nota de alunos coerentes com o mesmo nº de acertos; padrão) ou *mediana nacional*.
-- O texto "Por que é tão importante investir nisto?" é editável no painel (ou deixe vazio para omitir).
+- O texto "Por que é tão importante investir nisto?" vem em branco: escreva no painel para incluí-lo (vazio = seção omitida).
 
 ## Análise por habilidade (descritores da Matriz de Referência)
 - `matriz.py` extrai as 120 habilidades (H1–H30 × 4 áreas) do PDF oficial do INEP (`data/ref/matriz.pdf`) → `data/ref/habilidades.csv`.
@@ -49,3 +49,10 @@ Outros detalhes:
 - Painel: aba **🧩 Habilidades**. PDF: conclusão nº 4 + tabela de habilidades prioritárias e questões fáceis.
 - Cada habilidade aparece em 1–3 questões por prova: somamos os anos e marcamos ⚠️ quando a escola tem < 30 respostas.
 - Em 2025, 5 cadernos (≈2% dos alunos, provavelmente a reaplicação) não constam no ITENS_PROVA e ficam fora desta análise.
+
+## Acerto por questão
+- `questoes.py --anos 2024 2025` → `questoes_escola_<ano>.parquet` (acerto por escola × questão) e `questoes_itens.parquet`
+  (habilidade, gabarito, dificuldade e % Brasil de cada questão) (~1 min).
+- As questões seguem a numeração do caderno **azul** da aplicação principal (CO_ITEM liga os demais cadernos a ele).
+- Painel: aba **❓ Acerto por questão** — barra azul = escola; barra cinza = média simples das demais escolas do filtro
+  da barra lateral (UF, município, rede, mínimo de participantes) no mesmo ano.
